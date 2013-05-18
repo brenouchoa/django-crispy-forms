@@ -9,7 +9,7 @@ django-crispy-forms implements a class called ``FormHelper`` that defines the fo
 Fundamentals
 ~~~~~~~~~~~~
 
-For the rest of this document we will use the following example form of how to use a helper. This form is in charge of gathering some user information::
+For the rest of this document we will use the following example form for showing how to use a helper. This form is in charge of gathering some user information::
 
     class ExampleForm(forms.Form):
         like_website = forms.TypedChoiceField(
@@ -22,13 +22,13 @@ For the rest of this document we will use the following example form of how to u
         )
 
         favorite_food = forms.CharField(
-            label = "What is you favorite food?",
+            label = "What is your favorite food?",
             max_length = 80,
             required = True,
         )
 
         favorite_color = forms.CharField(
-            label = "What is you favorite color?",
+            label = "What is your favorite color?",
             max_length = 80,
             required = True,
         )
@@ -42,7 +42,7 @@ For the rest of this document we will use the following example form of how to u
             label = "Additional notes or feedback",
             required = False,
         )
-        
+
 Let's see how helpers works step by step, with some examples explained. First you will need to import ``FormHelper``::
 
     from crispy_forms.helper import FormHelper
@@ -54,10 +54,10 @@ Your helper can be a class level variable or an instance level variable, if you 
     class ExampleForm(forms.Form):
         [...]
         def __init__(self, *args, **kwargs):
-            self.helper = FormHelper()
             super(ExampleForm, self).__init__(*args, **kwargs)
+            self.helper = FormHelper()
 
-As you can see you need to override the constructor and call the base class constructor using ``super``. This helper doesn't set any form attributes, so it's useless. Let's see how to set up some basic `FormHelper` attributes::
+As you can see you need to call the base class constructor using ``super`` and override the constructor. This helper doesn't set any form attributes, so it's useless. Let's see how to set up some basic `FormHelper` attributes::
 
     from crispy_forms.helper import FormHelper
     from crispy_forms.layout import Submit
@@ -65,6 +65,7 @@ As you can see you need to override the constructor and call the base class cons
     class ExampleForm(forms.Form):
         [...]
         def __init__(self, *args, **kwargs):
+            super(ExampleForm, self).__init__(*args, **kwargs)
             self.helper = FormHelper()
             self.helper.form_id = 'id-exampleForm'
             self.helper.form_class = 'blueForms'
@@ -72,7 +73,6 @@ As you can see you need to override the constructor and call the base class cons
             self.helper.form_action = 'submit_survey'
 
             self.helper.add_input(Submit('submit', 'Submit'))
-            super(ExampleForm, self).__init__(*args, **kwargs)
 
 Note that we are importing a class called ``Submit`` that is a layout object. We will see what layout objects are in detail later on, for now on let's just say that this adds a submit button to our form, so people can send their survey.
 
@@ -183,12 +183,24 @@ Then you will have to write a little of html code surrounding the forms::
 You can read a list of :ref:`helper attributes` and what they are for.
 
 
-Make django-crispy-forms fail loud
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Make crispy-forms fail loud
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-By default when django-crispy-forms encounters errors, it fails silently, logs them and continues working if possible. A settings variable called ``CRISPY_FAIL_SILENTLY`` has been added so that you can control this behavior. If you want to raise exceptions instead of logging, telling you what’s going on when you are developing in debug mode, you can set it to::
+By default when crispy-forms encounters errors, it fails silently, logs them and continues working if possible. A settings variable called ``CRISPY_FAIL_SILENTLY`` has been added so that you can control this behavior. If you want to raise exceptions instead of logging, telling you what’s going on when you are developing in debug mode, you can set it to::
 
     CRISPY_FAIL_SILENTLY = not DEBUG
+
+
+Change crispy-forms <input> default classes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Django fields generate default classes, crispy-forms handles these and adds other classes for compatibility with CSS frameworks.
+
+For example a ``CharField`` generates an ``<input class="textinput" ...``. But in uni form we need the class to be ``textInput`` (with capital 'I'), so crispy-forms leaves it like ``<input class="textinput textInput"...``. All official template packs are handled automatically, but maybe you are integrating a new CSS framework, or your company's custom one, with crispy-forms and need to change the default conversions. For this you need to use a settings variable called ``CRISPY_CLASS_CONVERTERS``, expected to be a Python dictionary::
+
+    CRISPY_CLASS_CONVERTERS = {'textinput': "textinput inputtext"}
+
+For example this setting would generate ``<input class"textinput inputtext" ...``. The key of the dictionary ``textinput`` is the Django's default class, the value is what you want it to be substituted with, in this case we are keeping ``textinput``.
 
 
 Rendering formsets
@@ -269,12 +281,19 @@ Helper attributes you can set
     Default set to ``True``. It decides wether to render or not form errors. If set to ``False``, form.errors will not be visible even if they happen. You have to manually render them customizing your template. This allows you to customize error output.
 
 **render_unmentioned_fields = False**
-    By default django-crispy-forms renders the layout specified if it exists strictly, which means it only renders what the layout mentions, unless your form has ``Meta.fields`` and ``Meta.exclude`` defined, in that case it uses them. If you want to render unmentioned fields in the layout, for example if you are worried about forgetting mentioning them you have to set this property to ``True``. It defaults to ``False``.
+    By default django-crispy-forms renders the layout specified if it exists strictly, which means it only renders what the layout mentions, unless your form has ``Meta.fields`` and ``Meta.exclude`` defined, in that case it uses them. If you want to render unmentioned fields (all form fields), for example if you are worried about forgetting mentioning them you have to set this property to ``True``. It defaults to ``False``.
+
+**render_hidden_fields = False**
+    By default django-crispy-forms renders the layout specified if it exists strictly. Sometimes you might be interested in rendering all form's hidden fields no matter if they are mentioned or not. It defaults to ``False``.
+
+**render_required_fields = False**
+    By default django-crispy-forms renders the layout specified if it exists strictly. Sometimes you might be interested in rendering all form's hidden required fields no matter if they are mentioned or not. It defaults to ``False``.
+
 
 Bootstrap Helper attributes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-There are currently some helper attributes that only have functionality for a specific template pack. These doesn't necessarily mean that they won't be supported for other template packs in the future.
+There are currently some helper attributes that only have functionality for a specific template pack. This doesn't necessarily mean that they won't be supported for other template packs in the future.
 
 **help_text_inline = False**
     Sets whether help texts should be rendered inline or block. If set to ``True`` help texts will be rendered ``help-inline`` class, otherwise using ``help-block``. By default text messages are rendered in block mode.

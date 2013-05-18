@@ -5,7 +5,8 @@ import django
 from django import forms
 from django.conf import settings
 from django.core.urlresolvers import reverse
-from django.forms.models import formset_factory
+from django.forms.forms import BoundField
+from django.forms.models import formset_factory, modelformset_factory
 from django.template import Context, TemplateSyntaxError
 from django.template.loader import get_template_from_string
 from django.middleware.csrf import _get_new_csrf_key
@@ -20,14 +21,16 @@ from crispy_forms.layout import (
     Div, Field, MultiWidgetField
 )
 from crispy_forms.bootstrap import (
-    AppendedPrependedText, AppendedText, PrependedText, InlineCheckboxes
+    AppendedPrependedText, AppendedText, PrependedText, InlineCheckboxes,
+    FieldWithButtons, StrictButton, InlineRadios, Tab, TabHolder,
+    AccordionGroup, Accordion
 )
 from crispy_forms.utils import render_crispy_form
 from crispy_forms.templatetags.crispy_forms_tags import CrispyFormNode
 
-from forms import (
+from crispy_forms.tests.forms import (
     TestForm, TestForm2, TestForm3, ExampleForm, CheckboxesTestForm,
-    FormWithMeta
+    FormWithMeta, TestForm4, CrispyTestModel
 )
 
 
@@ -105,6 +108,21 @@ class TestBasicFunctionalityTags(TestCase):
         html = template.render(c)
         self.assertTrue('email-fields' in html)
 
+    def test_crispy_field_and_class_converters(self):
+        if hasattr(settings, 'CRISPY_CLASS_CONVERTERS'):
+            template = get_template_from_string(u"""
+                {% load crispy_forms_field %}
+                {% crispy_field testField 'class' 'error' %}
+            """)
+            test_form = TestForm()
+            field_instance = test_form.fields['email']
+            bound_field = BoundField(test_form, field_instance, 'email')
+
+            c = Context({'testField': bound_field})
+            html = template.render(c)
+            self.assertTrue('error' in html)
+            self.assertTrue('inputtext' in html)
+
 
 class TestFormHelpers(TestCase):
     urls = 'crispy_forms.tests.urls'
@@ -116,14 +134,10 @@ class TestFormHelpers(TestCase):
 
     def test_inputs(self):
         form_helper = FormHelper()
-        submit  = Submit('my-submit', 'Submit', css_class="button white")
-        reset   = Reset('my-reset', 'Reset')
-        hidden  = Hidden('my-hidden', 'Hidden')
-        button  = Button('my-button', 'Button')
-        form_helper.add_input(submit)
-        form_helper.add_input(reset)
-        form_helper.add_input(hidden)
-        form_helper.add_input(button)
+        form_helper.add_input(Submit('my-submit', 'Submit', css_class="button white"))
+        form_helper.add_input(Reset('my-reset', 'Reset'))
+        form_helper.add_input(Hidden('my-hidden', 'Hidden'))
+        form_helper.add_input(Button('my-button', 'Button'))
 
         template = get_template_from_string(u"""
             {% load crispy_forms_tags %}
@@ -146,7 +160,7 @@ class TestFormHelpers(TestCase):
             self.assertTrue('class="btn"' in html)
             self.assertTrue('btn btn-primary' in html)
             self.assertTrue('btn btn-inverse' in html)
-            self.assertEqual(html.count('/>&zwnj;'), 4)
+            self.assertEqual(len(re.findall(r'<input[^>]+> <', html)), 8)
 
     def test_invalid_form_method(self):
         form_helper = FormHelper()
@@ -240,6 +254,7 @@ class TestFormHelpers(TestCase):
             AppendedText('email', 'whatever'),
             PrependedText('first_name', 'blabla'),
             AppendedPrependedText('last_name', 'foo', 'bar'),
+            MultiField('legend', 'password1', 'password2')
         )
         form.is_valid()
 
@@ -247,6 +262,30 @@ class TestFormHelpers(TestCase):
         html = render_crispy_form(form)
         self.assertEqual(html.count('error'), 6)
 
+        form.helper.form_show_errors = False
+        html = render_crispy_form(form)
+        self.assertEqual(html.count('error'), 0)
+
+    def test_multifield_errors(self):
+        form = TestForm({
+            'email': 'invalidemail',
+            'password1': 'yes',
+            'password2': 'yes',
+        })
+        form.helper = FormHelper()
+        form.helper.layout = Layout(
+            MultiField('legend', 'email')
+        )
+        form.is_valid()
+
+        form.helper.form_show_errors = True
+        html = render_crispy_form(form)
+        self.assertEqual(html.count('error'), 3)
+
+        # Reset layout for avoiding side effects
+        form.helper.layout = Layout(
+            MultiField('legend', 'email')
+        )
         form.helper.form_show_errors = False
         html = render_crispy_form(form)
         self.assertEqual(html.count('error'), 0)
@@ -382,6 +421,33 @@ class TestFormHelpers(TestCase):
         if (settings.CRISPY_TEMPLATE_PACK == 'uni_form'):
             self.assertTrue('uniForm' in html)
 
+    def test_template_pack_override(self):
+        current_pack = settings.CRISPY_TEMPLATE_PACK
+        override_pack = current_pack == 'uni_form' and 'bootstrap' or 'uni_form'
+
+        # Syntax {% crispy form 'template_pack_name' %}
+        template = get_template_from_string(u"""
+            {%% load crispy_forms_tags %%}
+            {%% crispy form "%s" %%}
+        """ % override_pack)
+        c = Context({'form': TestForm()})
+        html = template.render(c)
+
+        # Syntax {% crispy form helper 'template_pack_name' %}
+        template = get_template_from_string(u"""
+            {%% load crispy_forms_tags %%}
+            {%% crispy form form_helper "%s" %%}
+        """ % override_pack)
+        c = Context({'form': TestForm(), 'form_helper': FormHelper()})
+        html2 = template.render(c)
+
+        if (current_pack == 'uni_form'):
+            self.assertTrue('control-group' in html)
+            self.assertTrue('control-group' in html2)
+        else:
+            self.assertTrue('uniForm' in html)
+            self.assertTrue('uniForm' in html2)
+
     def test_invalid_helper(self):
         template = get_template_from_string(u"""
             {% load crispy_forms_tags %}
@@ -457,6 +523,43 @@ class TestFormHelpers(TestCase):
         html = template.render(c)
 
         self.assertFalse("<input type='hidden' name='csrfmiddlewaretoken'" in html)
+
+    def test_render_hidden_fields(self):
+        test_form = TestForm()
+        test_form.helper = FormHelper()
+        test_form.helper.layout = Layout(
+            'email'
+        )
+        test_form.helper.render_hidden_fields = True
+
+        html = render_crispy_form(test_form)
+        self.assertEqual(html.count('<input'), 1)
+
+        # Now hide a couple of fields
+        for field in ('password1', 'password2'):
+            test_form.fields[field].widget = forms.HiddenInput()
+
+        html = render_crispy_form(test_form)
+        self.assertEqual(html.count('<input'), 3)
+        self.assertEqual(html.count('hidden'), 2)
+
+        if django.get_version() < '1.5':
+            self.assertEqual(html.count('type="hidden" name="password1"'), 1)
+            self.assertEqual(html.count('type="hidden" name="password2"'), 1)
+        else:
+            self.assertEqual(html.count('name="password1" type="hidden"'), 1)
+            self.assertEqual(html.count('name="password2" type="hidden"'), 1)
+
+    def test_render_required_fields(self):
+        test_form = TestForm()
+        test_form.helper = FormHelper()
+        test_form.helper.layout = Layout(
+            'email'
+        )
+        test_form.helper.render_required_fields = True
+
+        html = render_crispy_form(test_form)
+        self.assertEqual(html.count('<input'), 7)
 
 
 class TestFormLayout(TestCase):
@@ -545,14 +648,14 @@ class TestFormLayout(TestCase):
         c = Context({'form': form, 'form2': form2})
         html = template.render(c)
 
-        self.assertEqual(html.count('<input type="text" name="comment"'), 2)
+        self.assertEqual(html.count('name="comment"'), 2)
         self.assertEqual(html.count('name="is_company"'), 1)
 
     def test_hidden_fields(self):
         form = TestForm()
-        # All fields fake hidden
+        # All fields hidden
         for field in form.fields:
-            form[field].field.widget.is_hidden = True
+            form.fields[field].widget = forms.HiddenInput()
 
         form.helper = FormHelper()
         form.helper.layout = Layout(
@@ -560,9 +663,42 @@ class TestFormLayout(TestCase):
             PrependedText('password2', 'bar'),
             AppendedPrependedText('email', 'bar'),
             InlineCheckboxes('first_name'),
+            InlineRadios('last_name'),
         )
         html = render_crispy_form(form)
-        self.assertEqual(html.count("<input"), 4)
+        self.assertEqual(html.count("<input"), 5)
+        self.assertEqual(html.count('type="hidden"'), 5)
+
+    def test_field_with_buttons(self):
+        form = TestForm()
+        form.helper = FormHelper()
+        form.helper.layout = Layout(
+            FieldWithButtons(
+                Field('password1', css_class="span4"),
+                StrictButton("Go!", css_id="go-button"),
+                StrictButton("No!", css_class="extra"),
+                StrictButton("Test", type="submit", name="whatever", value="something"),
+                css_class="extra",
+                autocomplete="off"
+            )
+        )
+        html = render_crispy_form(form)
+        self.assertEqual(html.count('class="control-group extra"'), 1)
+        self.assertEqual(html.count('autocomplete="off"'), 1)
+        self.assertEqual(html.count('class="input-append"'), 1)
+        self.assertEqual(html.count('class="span4'), 1)
+        self.assertEqual(html.count('id="go-button"'), 1)
+        self.assertEqual(html.count("Go!"), 1)
+        self.assertEqual(html.count("No!"), 1)
+        self.assertEqual(html.count('class="btn"'), 2)
+        self.assertEqual(html.count('class="btn extra"'), 1)
+        self.assertEqual(html.count('type="submit"'), 1)
+        self.assertEqual(html.count('name="whatever"'), 1)
+        self.assertEqual(html.count('value="something"'), 1)
+
+        if settings.CRISPY_TEMPLATE_PACK == 'bootstrap':
+            # Make sure white spaces between buttons are there in bootstrap
+            self.assertEqual(len(re.findall(r'</button> <', html)), 3)
 
     def test_layout_fieldset_row_html_with_unicode_fieldnames(self):
         form_helper = FormHelper()
@@ -762,45 +898,62 @@ class TestFormLayout(TestCase):
         self.assertFalse('email' in html)
 
     def test_formset_layout(self):
-        template = get_template_from_string(u"""
-            {% load crispy_forms_tags %}
-            {% crispy testFormSet formset_helper %}
-        """)
-
-        form_helper = FormHelper()
-        form_helper.form_id = 'thisFormsetRocks'
-        form_helper.form_class = 'formsets-that-rock'
-        form_helper.form_method = 'POST'
-        form_helper.form_action = 'simpleAction'
-        form_helper.add_layout(
-            Layout(
-                Fieldset("Item {{ forloop.counter }}",
-                    'is_company',
-                    'email',
-                ),
-                HTML("{% if forloop.first %}Note for first form only{% endif %}"),
-                Row('password1', 'password2'),
-                Fieldset("",
-                    'first_name',
-                    'last_name'
-                )
+        TestFormSet = formset_factory(TestForm, extra=3)
+        formset = TestFormSet()
+        helper = FormHelper()
+        helper.form_id = 'thisFormsetRocks'
+        helper.form_class = 'formsets-that-rock'
+        helper.form_method = 'POST'
+        helper.form_action = 'simpleAction'
+        helper.layout = Layout(
+            Fieldset("Item {{ forloop.counter }}",
+                'is_company',
+                'email',
+            ),
+            HTML("{% if forloop.first %}Note for first form only{% endif %}"),
+            Row('password1', 'password2'),
+            Fieldset("",
+                'first_name',
+                'last_name'
             )
         )
 
-        TestFormSet = formset_factory(TestForm, extra = 3)
-        testFormSet = TestFormSet()
+        html = render_crispy_form(
+            form=formset, helper=helper, context={'csrf_token': _get_new_csrf_key()}
+        )
 
-        c = Context({
-            'testFormSet': testFormSet,
-            'formset_helper': form_helper,
-            'csrf_token': _get_new_csrf_key()
-        })
-        html = template.render(c)
+        # Check formset fields
+        django_version = django.get_version()
+        if django_version < '1.5':
+            self.assertEqual(html.count(
+                'type="hidden" name="form-TOTAL_FORMS" value="3" id="id_form-TOTAL_FORMS"'
+            ), 1)
+            self.assertEqual(html.count(
+                'type="hidden" name="form-INITIAL_FORMS" value="0" id="id_form-INITIAL_FORMS"'
+            ), 1)
+            if django_version < '1.4.4':
+                self.assertEqual(html.count(
+                    'type="hidden" name="form-MAX_NUM_FORMS" id="id_form-MAX_NUM_FORMS"'
+                ), 1)
+            if django_version >= '1.4.4' and django_version < 1.5:
+                self.assertEqual(html.count(
+                    'type="hidden" name="form-MAX_NUM_FORMS" value="1000" id="id_form-MAX_NUM_FORMS"'
+                ), 1)
+        else:
+            self.assertEqual(html.count(
+                'id="id_form-TOTAL_FORMS" name="form-TOTAL_FORMS" type="hidden" value="3"'
+            ), 1)
+            self.assertEqual(html.count(
+                'id="id_form-INITIAL_FORMS" name="form-INITIAL_FORMS" type="hidden" value="0"'
+            ), 1)
+            self.assertEqual(html.count(
+                'id="id_form-MAX_NUM_FORMS" name="form-MAX_NUM_FORMS" type="hidden" value="1000"'
+            ), 1)
+        self.assertEqual(html.count("hidden"), 4)
 
-        # Check form parameters
+        # Check form structure
         self.assertEqual(html.count('<form'), 1)
         self.assertEqual(html.count("<input type='hidden' name='csrfmiddlewaretoken'"), 1)
-
         self.assertTrue('formsets-that-rock' in html)
         self.assertTrue('method="post"' in html)
         self.assertTrue('id="thisFormsetRocks"' in html)
@@ -811,11 +964,56 @@ class TestFormLayout(TestCase):
         self.assertTrue('Item 2' in html)
         self.assertTrue('Item 3' in html)
         self.assertEqual(html.count('Note for first form only'), 1)
-
         if settings.CRISPY_TEMPLATE_PACK == 'uni_form':
             self.assertEqual(html.count('formRow'), 3)
         else:
             self.assertEqual(html.count('row'), 3)
+
+    def test_modelformset_layout(self):
+        CrispyModelFormSet = modelformset_factory(CrispyTestModel, form=TestForm4, extra=3)
+        formset = CrispyModelFormSet(queryset=CrispyTestModel.objects.none())
+        helper = FormHelper()
+        helper.layout = Layout(
+            'email'
+        )
+
+        html = render_crispy_form(form=formset, helper=helper)
+        self.assertEqual(html.count("id_form-0-id"), 1)
+        self.assertEqual(html.count("id_form-1-id"), 1)
+        self.assertEqual(html.count("id_form-2-id"), 1)
+
+        django_version = django.get_version()
+        if django_version < '1.5':
+            self.assertEqual(html.count(
+                'type="hidden" name="form-TOTAL_FORMS" value="3" id="id_form-TOTAL_FORMS"'
+            ), 1)
+            self.assertEqual(html.count(
+                'type="hidden" name="form-INITIAL_FORMS" value="0" id="id_form-INITIAL_FORMS"'
+            ), 1)
+            if django_version < '1.4.4':
+                self.assertEqual(html.count(
+                    'type="hidden" name="form-MAX_NUM_FORMS" id="id_form-MAX_NUM_FORMS"'
+                ), 1)
+            if django_version >= '1.4.4' and django_version < 1.5:
+                self.assertEqual(html.count(
+                    'type="hidden" name="form-MAX_NUM_FORMS" value="1000" id="id_form-MAX_NUM_FORMS"'
+                ), 1)
+        else:
+            self.assertEqual(html.count(
+                'id="id_form-TOTAL_FORMS" name="form-TOTAL_FORMS" type="hidden" value="3"'
+            ), 1)
+            self.assertEqual(html.count(
+                'id="id_form-INITIAL_FORMS" name="form-INITIAL_FORMS" type="hidden" value="0"'
+            ), 1)
+            self.assertEqual(html.count(
+                'id="id_form-MAX_NUM_FORMS" name="form-MAX_NUM_FORMS" type="hidden" value="1000"'
+            ), 1)
+
+        self.assertEqual(html.count('name="form-0-email"'), 1)
+        self.assertEqual(html.count('name="form-1-email"'), 1)
+        self.assertEqual(html.count('name="form-2-email"'), 1)
+        self.assertEqual(html.count('name="form-3-email"'), 0)
+        self.assertEqual(html.count('password'), 0)
 
     def test_multiwidget_field(self):
         template = get_template_from_string(u"""
@@ -874,11 +1072,20 @@ class TestFormLayout(TestCase):
         test_form = TestForm3()
         self.assertEqual(test_form.helper.layout.fields, ['email'])
 
+    def test_modelform_layout_without_meta(self):
+        test_form = TestForm4()
+        test_form.helper = FormHelper()
+        test_form.helper.layout = Layout('email')
+        html = render_crispy_form(test_form)
+
+        self.assertTrue('email' in html)
+        self.assertFalse('password' in html)
+
     def test_multiplecheckboxes(self):
         test_form = CheckboxesTestForm()
         html = render_crispy_form(test_form)
 
-        self.assertEqual(html.count('checked="checked"'), 5)
+        self.assertEqual(html.count('checked="checked"'), 6)
 
         test_form.helper = FormHelper(test_form)
         test_form.helper[1].wrap(InlineCheckboxes, inline=True)
@@ -895,11 +1102,10 @@ class TestLayoutObjects(TestCase):
             {% crispy test_form %}
         """)
 
-
         test_form = TestForm()
         test_form.helper = FormHelper()
         test_form.helper.layout = Layout(
-            Field('email', type="hidden", data_mierda=12),
+            Field('email', type="hidden", data_test=12),
             Field('datetime_field'),
         )
 
@@ -909,16 +1115,17 @@ class TestLayoutObjects(TestCase):
         html = template.render(c)
 
         # Check form parameters
-        self.assertEqual(html.count('<input type="hidden" data-mierda="12" name="email"'), 1)
+        self.assertEqual(html.count('data-test="12"'), 1)
+        self.assertEqual(html.count('name="email"'), 1)
         self.assertEqual(html.count('class="dateinput"'), 1)
         self.assertEqual(html.count('class="timeinput"'), 1)
 
-    def test_appended_prepended_text(self):
-        template = get_template_from_string(u"""
-            {% load crispy_forms_tags %}
-            {% crispy test_form %}
-        """)
+    def test_field_wrapper_class(self):
+        html = Field('email', wrapper_class="testing").render(TestForm(), "", Context())
+        if settings.CRISPY_TEMPLATE_PACK == 'bootstrap':
+            self.assertEqual(html.count('class="control-group testing"'), 1)
 
+    def test_appended_prepended_text(self):
         test_form = TestForm()
         test_form.helper = FormHelper()
         test_form.helper.layout = Layout(
@@ -926,17 +1133,123 @@ class TestLayoutObjects(TestCase):
             AppendedText('password1', '#'),
             PrependedText('password2', '$'),
         )
-
-        c = Context({
-            'test_form': test_form,
-        })
-        html = template.render(c)
+        html = render_crispy_form(test_form)
 
         # Check form parameters
-        self.assertEqual(html.count('<span class="add-on ">@</span>'), 1)
-        self.assertEqual(html.count('<span class="add-on ">gmail.com</span>'), 1)
-        self.assertEqual(html.count('<span class="add-on ">#</span>'), 1)
-        self.assertEqual(html.count('<span class="add-on ">$</span>'), 1)
+        self.assertEqual(html.count('<span class="add-on">@</span>'), 1)
+        self.assertEqual(html.count('<span class="add-on">gmail.com</span>'), 1)
+        self.assertEqual(html.count('<span class="add-on">#</span>'), 1)
+        self.assertEqual(html.count('<span class="add-on">$</span>'), 1)
+
+    def test_inline_radios(self):
+        test_form = CheckboxesTestForm()
+        test_form.helper = FormHelper()
+        test_form.helper.layout = Layout(InlineRadios('inline_radios'))
+        html = render_crispy_form(test_form)
+
+        self.assertEqual(html.count('radio inline"'), 2)
+
+    def test_accordion_and_accordiongroup(self):
+        test_form = TestForm()
+        test_form.helper = FormHelper()
+        test_form.helper.layout = Layout(
+            Accordion(
+                AccordionGroup(
+                    'one',
+                    'first_name'
+                ),
+                AccordionGroup(
+                    'two',
+                    'password1',
+                    'password2'
+                )
+            )
+        )
+        html = render_crispy_form(test_form)
+
+        self.assertEqual(html.count('<div class="accordion"'), 1)
+        self.assertEqual(html.count('<div class="accordion-group">'), 2)
+        self.assertEqual(html.count('<div id="one"'), 1)
+        self.assertEqual(html.count('<div id="two"'), 1)
+        self.assertEqual(html.count('name="first_name"'), 1)
+        self.assertEqual(html.count('name="password1"'), 1)
+        self.assertEqual(html.count('name="password2"'), 1)
+
+    def test_tab_and_tabholder(self):
+        test_form = TestForm()
+        test_form.helper = FormHelper()
+        test_form.helper.layout = Layout(
+            TabHolder(
+                Tab('one',
+                    'first_name',
+                    css_id="custom-name"
+                ),
+                Tab('two',
+                    'password1',
+                    'password2'
+                )
+            )
+        )
+        html = render_crispy_form(test_form)
+
+        self.assertEqual(html.count(
+            '<li class="tab-pane active"><a href="#custom-name" data-toggle="tab">One</a></li>'), 1)
+        self.assertEqual(html.count('<li class="tab-pane'), 2)
+        self.assertEqual(html.count('tab-pane'), 4)
+        self.assertEqual(html.count('<div id="custom-name"'), 1)
+        self.assertEqual(html.count('<div id="two"'), 1)
+        self.assertEqual(html.count('name="first_name"'), 1)
+        self.assertEqual(html.count('name="password1"'), 1)
+        self.assertEqual(html.count('name="password2"'), 1)
+
+    def test_tab_helper_reuse(self):
+        # this is a proper form, according to the docs.
+        # note that the helper is a class property here,
+        # shared between all instances
+        class TestForm(forms.Form):
+            val1 = forms.CharField(required=False)
+            val2 = forms.CharField(required=True)
+            helper = FormHelper()
+            helper.layout = Layout(
+                TabHolder(Tab('one', 'val1',),
+                          Tab('two', 'val2',)))
+
+        # first render of form => everything is fine
+        test_form = TestForm()
+        html = render_crispy_form(test_form)
+
+        # second render of form => first tab should be active,
+        # but not duplicate class
+        test_form = TestForm()
+        html = render_crispy_form(test_form)
+        self.assertEqual(html.count('class="tab-pane active active"'), 0)
+
+        # render a new form, now with errors
+        test_form = TestForm(data={'val1': 'foo'})
+        html = render_crispy_form(test_form)
+        # tab 1 should not be active
+        self.assertEqual(html.count('<div id="one" \n    class="tab-pane active'), 0)
+        # tab 2 should be active
+        self.assertEqual(html.count('<div id="two" \n    class="tab-pane active'), 1)
+
+    def test_html_with_carriage_returns(self):
+        test_form = TestForm()
+        test_form.helper = FormHelper()
+        test_form.helper.layout = Layout(
+            HTML("""
+                if (a==b){
+                    // some comment
+                    a+1;
+                    foo();
+                }
+            """)
+        )
+        html = render_crispy_form(test_form)
+
+        if settings.CRISPY_TEMPLATE_PACK == 'uni_form':
+            self.assertEqual(html.count('\n'), 22)
+        else:
+            self.assertEqual(html.count('\n'), 24)
 
 
 class TestDynamicLayouts(TestCase):
@@ -1044,6 +1357,46 @@ class TestDynamicLayouts(TestCase):
         self.assertEqual(layout.fields[0].legend, 'legend')
         self.assertEqual(layout.fields[1], 'password1')
         self.assertEqual(layout.fields[2], 'password2')
+
+    def test_update_attributes_and_wrap_once(self):
+        helper = FormHelper()
+        layout = Layout(
+            'email',
+            Field('password1'),
+            'password2',
+        )
+        helper.layout = layout
+        helper.filter(Field).update_attributes(readonly=True)
+        self.assertTrue(isinstance(layout[1], Field))
+        self.assertEqual(layout[1].attrs, {'readonly': True})
+
+        layout = Layout(
+            'email',
+            Div(Field('password1')),
+            'password2',
+        )
+        helper.layout = layout
+        helper.filter(Field, max_level=2).update_attributes(readonly=True)
+        self.assertTrue(isinstance(layout[1][0], Field))
+        self.assertEqual(layout[1][0].attrs, {'readonly': True})
+
+        layout = Layout(
+            'email',
+            Div(Field('password1')),
+            'password2',
+        )
+        helper.layout = layout
+
+        helper.filter(basestring, greedy=True).wrap_once(Field)
+        helper.filter(Field, greedy=True).update_attributes(readonly=True)
+
+        self.assertTrue(isinstance(layout[0], Field))
+        self.assertTrue(isinstance(layout[1][0], Field))
+        self.assertTrue(isinstance(layout[1][0][0], basestring))
+        self.assertTrue(isinstance(layout[2], Field))
+        self.assertEqual(layout[1][0].attrs, {'readonly': True})
+        self.assertEqual(layout[0].attrs, {'readonly': True})
+        self.assertEqual(layout[2].attrs, {'readonly': True})
 
     def test_get_layout_objects(self):
         layout_1 = Layout(
@@ -1282,18 +1635,64 @@ class TestDynamicLayouts(TestCase):
         self.assertTrue(isinstance(form.helper.layout[0][1][0][0], basestring))
         self.assertTrue(isinstance(form.helper.layout[0][4][0], basestring))
 
-    def test_getitem_by_field_name(self):
+    def test_all_without_layout(self):
         form = TestForm()
-        form.helper = FormHelper(form)
+        form.helper = FormHelper()
+        self.assertRaises(FormHelpersException, lambda: form.helper.all().wrap(Div))
+
+    def test_filter_by_widget_without_form(self):
+        form = TestForm()
+        form.helper = FormHelper()
+        form.helper.layout = self.advanced_layout
+        self.assertRaises(FormHelpersException, lambda: form.helper.filter_by_widget(forms.PasswordInput))
+
+    def test_formhelper__getitem__(self):
+        helper = FormHelper()
         layout = Layout(
             Div('email'),
             'password1',
         )
-        form.helper.layout = layout
-        form.helper['email'].wrap(Field, css_class='hero')
-        self.assertTrue(isinstance(layout.fields[0].fields[0], Field))
+        helper.layout = layout
+        helper['email'].wrap(Field, css_class='hero')
+        self.assertTrue(isinstance(layout[0][0], Field))
+        self.assertEqual(layout[0][0][0], 'email')
 
-    def test_getitem_layout_object(self):
+        helper = FormHelper()
+        helper.layout = Layout('password1')
+        helper['password1'].wrap(AppendedText, "extra")
+        self.assertTrue(isinstance(helper.layout[0], AppendedText))
+        self.assertEqual(helper.layout[0][0], 'password1')
+        self.assertEqual(helper.layout[0].text, 'extra')
+
+    def test_formhelper__setitem__(self):
+        helper = FormHelper()
+        layout = Layout(
+            'first_field',
+            Div('email')
+        )
+        helper.layout = layout
+        helper[0] = 'replaced'
+        self.assertEqual(layout[0], 'replaced')
+
+    def test_formhelper__delitem__and__len__(self):
+        helper = FormHelper()
+        layout = Layout(
+            'first_field',
+            Div('email')
+        )
+        helper.layout = layout
+        del helper[0]
+        self.assertEqual(len(helper), 1)
+
+    def test__delitem__and__len__layout_object(self):
+        layout = Layout(
+            'first_field',
+            Div('email')
+        )
+        del layout[0]
+        self.assertEqual(len(layout), 1)
+
+    def test__getitem__layout_object(self):
         layout = Layout(
             Div(
                 Div(
@@ -1310,7 +1709,7 @@ class TestDynamicLayouts(TestCase):
         self.assertTrue(isinstance(layout[0][1][0], basestring))
         self.assertTrue(isinstance(layout[0][2], basestring))
 
-    def test_append_layout_object(self):
+    def test__getattr__append_layout_object(self):
         layout = Layout(
             Div('email')
         )
@@ -1319,7 +1718,7 @@ class TestDynamicLayouts(TestCase):
         self.assertTrue(isinstance(layout[0][0], basestring))
         self.assertTrue(isinstance(layout[1], basestring))
 
-    def test_setitem_layout_object(self):
+    def test__setitem__layout_object(self):
         layout = Layout(
             Div('email')
         )

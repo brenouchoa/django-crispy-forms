@@ -1,13 +1,11 @@
-import os
+import warnings
 
 from django.conf import settings
 from django.template import Context, Template
 from django.template.loader import render_to_string
-from django.template.defaultfilters import slugify
 from django.utils.html import conditional_escape
 
-from utils import render_field, flatatt
-from exceptions import DynamicError
+from crispy_forms.utils import render_field, flatatt
 
 TEMPLATE_PACK = getattr(settings, 'CRISPY_TEMPLATE_PACK', 'bootstrap')
 
@@ -19,12 +17,19 @@ class LayoutObject(object):
     def __setitem__(self, slice, value):
         self.fields[slice] = value
 
+    def __delitem__(self, slice):
+        del self.fields[slice]
+
+    def __len__(self):
+        return len(self.fields)
+
     def __getattr__(self, name):
         """
         This allows us to access self.fields list methods like append or insert, without
         having to declaee them one by one
         """
-        if hasattr(self.fields, name):
+        # Check necessary for unpickling, see #107
+        if 'fields' in self.__dict__ and hasattr(self.fields, name):
             return getattr(self.fields, name)
         else:
             return object.__getattribute__(self, name)
@@ -77,9 +82,8 @@ class LayoutObject(object):
             # If it's a layout object and we haven't reached the max depth limit or greedy
             # we recursive call
             if hasattr(layout_object, 'get_field_names') and (len(index) < max_level or greedy):
-                pointers = pointers + layout_object.get_layout_objects(
-                    *LayoutClasses, index=index + [i], max_level=max_level, greedy=greedy
-                )
+                new_kwargs = {'index': index + [i], 'max_level': max_level, 'greedy': greedy}
+                pointers = pointers + layout_object.get_layout_objects(*LayoutClasses, **new_kwargs)
 
         return pointers
 
@@ -119,98 +123,12 @@ class Layout(LayoutObject):
     def __init__(self, *fields):
         self.fields = list(fields)
 
-    def render(self, form, form_style, context):
+    def render(self, form, form_style, context, template_pack=TEMPLATE_PACK):
         html = ""
         for field in self.fields:
-            html += render_field(field, form, form_style, context)
+            html += render_field(field, form, form_style,
+                                 context, template_pack=template_pack)
         return html
-
-
-class LayoutSlice(object):
-    def __init__(self, layout, key):
-        self.layout = layout
-        if isinstance(key, (int, long)):
-            self.slice = slice(key, key+1, 1)
-        else:
-            self.slice = key
-
-    def wrapped_object(self, LayoutClass, fields, *args, **kwargs):
-        """
-        Returns a layout object of type `LayoutClass` with `args` and `kwargs` that
-        wraps `fields` inside.
-        """
-        if args:
-            if isinstance(fields, list):
-                arguments = args + tuple(fields)
-            else:
-                arguments = args + (fields,)
-
-            return LayoutClass(*arguments, **kwargs)
-        else:
-            if isinstance(fields, list):
-                return LayoutClass(*fields, **kwargs)
-            else:
-                return LayoutClass(fields, **kwargs)
-
-    def wrap(self, LayoutClass, *args, **kwargs):
-        """
-        Wraps each pointer in `self.slice` under a `LayoutClass` instance with
-        `args` and `kwargs` passed.
-        """
-        if isinstance(self.slice, slice):
-            for i in range(*self.slice.indices(len(self.layout.fields))):
-                self.layout.fields[i] = self.wrapped_object(LayoutClass, self.layout.fields[i], *args, **kwargs)
-
-        elif isinstance(self.slice, list):
-            # A list of pointers  Ex: [[[0, 0], 'div'], [[0, 2, 3], 'field_name']]
-            for pointer in self.slice:
-                position = pointer[0]
-
-                # If it's pointing first level, there is no need to traverse
-                if len(position) == 1:
-                    self.layout.fields[position[-1]] = self.wrapped_object(
-                        LayoutClass, self.layout.fields[position[-1]], *args, **kwargs
-                    )
-                else:
-                    layout_object = self.layout.fields[position[0]]
-                    for i in position[1:-1]:
-                        layout_object = layout_object.fields[i]
-
-                    try:
-                        # If layout object has a fields attribute
-                        if hasattr(layout_object, 'fields'):
-                            layout_object.fields[position[-1]] = self.wrapped_object(
-                                LayoutClass, layout_object.fields[position[-1]], *args, **kwargs
-                            )
-                        # Otherwise it's a basestring (a field name)
-                        else:
-                            self.layout.fields[position[0]] = self.wrapped_object(
-                                LayoutClass, layout_object, *args, **kwargs
-                            )
-                    except IndexError:
-                        # We could avoid this exception, recalculating pointers.
-                        # However this case is most of the time an undesired behavior
-                        raise DynamicError("Trying to wrap a field within an already wrapped field, \
-                            recheck your filter or layout")
-
-    def wrap_together(self, LayoutClass, *args, **kwargs):
-        """
-        Wraps pointers in `self.slice` together under a `LayoutClass` instance with
-        `args` and `kwargs` passed.
-        """
-        if isinstance(self.slice, slice):
-            # The start of the slice is replaced
-            self.layout.fields[self.slice.start] = self.wrapped_object(
-                LayoutClass, self.layout.fields[self.slice], *args, **kwargs
-            )
-
-            # The rest of places of the slice are removed, as they are included in the previous
-            for i in reversed(range(*self.slice.indices(len(self.layout.fields)))):
-                if i != self.slice.start:
-                    del self.layout.fields[i]
-
-        elif isinstance(self.slice, list):
-            raise DynamicError("wrap_together doesn't work with filter, only with [] operator")
 
 
 class ButtonHolder(LayoutObject):
@@ -235,10 +153,11 @@ class ButtonHolder(LayoutObject):
         self.css_id = kwargs.get('css_id', None)
         self.template = kwargs.get('template', self.template)
 
-    def render(self, form, form_style, context):
+    def render(self, form, form_style, context, template_pack=TEMPLATE_PACK):
         html = u''
         for field in self.fields:
-            html += render_field(field, form, form_style, context)
+            html += render_field(field, form, form_style,
+                                 context, template_pack=template_pack)
 
         return render_to_string(self.template, Context({'buttonholder': self, 'fields_output': html}))
 
@@ -252,16 +171,16 @@ class BaseInput(object):
     def __init__(self, name, value, **kwargs):
         self.name = name
         self.value = value
-        self.id = kwargs.get('css_id', '')
+        self.id = kwargs.pop('css_id', '')
         self.attrs = {}
 
-        if kwargs.has_key('css_class'):
+        if 'css_class' in kwargs:
             self.field_classes += ' %s' % kwargs.pop('css_class')
 
         self.template = kwargs.pop('template', self.template)
         self.flat_attrs = flatatt(kwargs)
 
-    def render(self, form, form_style, context):
+    def render(self, form, form_style, context, template_pack=TEMPLATE_PACK):
         """
         Renders an `<input />` if container is used as a Layout object.
         Input button value can be a variable in context.
@@ -344,10 +263,11 @@ class Fieldset(LayoutObject):
         self.template = kwargs.pop('template', self.template)
         self.flat_attrs = flatatt(kwargs)
 
-    def render(self, form, form_style, context):
+    def render(self, form, form_style, context, template_pack=TEMPLATE_PACK):
         fields = ''
         for field in self.fields:
-            fields += render_field(field, form, form_style, context)
+            fields += render_field(field, form, form_style, context,
+                                   template_pack=template_pack)
 
         legend = ''
         if self.legend:
@@ -356,31 +276,37 @@ class Fieldset(LayoutObject):
 
 
 class MultiField(LayoutObject):
-    """ multiField container. Renders to a multiField <div> """
+    """ MultiField container. Renders to a MultiField <div> """
     template = "uni_form/layout/multifield.html"
+    field_template = "uni_form/multifield.html"
 
     def __init__(self, label, *fields, **kwargs):
-        #TODO: Decide on how to support css classes for both container divs
         self.fields = list(fields)
         self.label_html = label
         self.label_class = kwargs.pop('label_class', u'blockLabel')
         self.css_class = kwargs.pop('css_class', u'ctrlHolder')
         self.css_id = kwargs.pop('css_id', None)
         self.template = kwargs.pop('template', self.template)
+        self.field_template = kwargs.pop('field_template', self.field_template)
         self.flat_attrs = flatatt(kwargs)
 
-    def render(self, form, form_style, context):
-        if form.errors:
-            self.css_class += " error"
+    def render(self, form, form_style, context, template_pack=TEMPLATE_PACK):
+        # If a field within MultiField contains errors
+        if context['form_show_errors']:
+            for field in map(lambda pointer: pointer[1], self.get_field_names()):
+                if field in form.errors:
+                    self.css_class += " error"
 
-        # We need to render fields using django-uni-form render_field so that MultiField can
-        # hold other Layout objects inside itself
         fields_output = u''
-        self.bound_fields = []
         for field in self.fields:
-            fields_output += render_field(field, form, form_style, context, 'uni_form/multifield.html', self.label_class, layout_object=self)
+            fields_output += render_field(
+                field, form, form_style, context,
+                self.field_template, self.label_class, layout_object=self,
+                template_pack=template_pack
+            )
 
-        return render_to_string(self.template, Context({'multifield': self, 'fields_output': fields_output}))
+        context.update({'multifield': self, 'fields_output': fields_output})
+        return render_to_string(self.template, context)
 
 
 class Div(LayoutObject):
@@ -396,7 +322,7 @@ class Div(LayoutObject):
     def __init__(self, *fields, **kwargs):
         self.fields = list(fields)
 
-        if hasattr(self, 'css_class') and kwargs.has_key('css_class'):
+        if hasattr(self, 'css_class') and 'css_class' in kwargs:
             self.css_class += ' %s' % kwargs.pop('css_class')
         if not hasattr(self, 'css_class'):
             self.css_class = kwargs.pop('css_class', None)
@@ -405,10 +331,10 @@ class Div(LayoutObject):
         self.template = kwargs.pop('template', self.template)
         self.flat_attrs = flatatt(kwargs)
 
-    def render(self, form, form_style, context):
+    def render(self, form, form_style, context, template_pack=TEMPLATE_PACK):
         fields = ''
         for field in self.fields:
-            fields += render_field(field, form, form_style, context)
+            fields += render_field(field, form, form_style, context, template_pack=template_pack)
 
         return render_to_string(self.template, Context({'div': self, 'fields': fields}))
 
@@ -420,73 +346,6 @@ class Row(Div):
         Row('form_field_1', 'form_field_2', 'form_field_3')
     """
     css_class = 'formRow' if TEMPLATE_PACK == 'uni_form' else 'row'
-
-
-class Tab(Div):
-    """
-    Tab object. It wraps fields in a div whose default class is "tab-pane" and
-    takes a name as first argument. Example::
-
-        Tab('tab_name', 'form_field_1', 'form_field_2', 'form_field_3')
-    """
-    css_class = 'tab-pane'
-    link_template = 'bootstrap/layout/tab-link.html'
-
-    def __init__(self, name, *fields, **kwargs):
-        super(Tab, self).__init__(*fields, **kwargs)
-        self.name = name
-        self.active = False
-        # id is necessary for the TabHolder links
-        if not self.css_id:
-            self.css_id = slugify(self.name)
-
-    def __contains__(self, field_name):
-        """
-        check if field_name is contained within tab.
-        """
-        return field_name in map(lambda pointer: pointer[1], self.get_field_names())
-
-    def render_link(self):
-        """
-        Render the link for the tab-pane. It must be called after render so css_class is updated
-        with active if needed.
-        """
-        return render_to_string(self.link_template, Context({'link': self}))
-
-    def render(self, form, form_style, context):
-        if self.active:
-            self.css_class += ' active'
-        return super(Tab, self).render(form, form_style, context)
-
-
-class TabHolder(Div):
-    """
-    TabHolder object. It wraps Tab objects in a container. Requiers bootstrap-tab.js::
-
-	    TabHolder(Tab('form_field_1', 'form_field_2'), Tab('form_field_3'))
-    """
-    template = 'bootstrap/layout/tab.html'
-    css_class = 'nav nav-tabs'
-
-    def first_tab_with_errors(self, errors):
-        """
-        Returns the first tab with errors, otherwise returns the first tab
-        """
-        for tab in self.fields:
-            errors_here = bool(filter(lambda error: error in tab, errors))
-            if errors_here:
-                return tab
-
-        return self.fields[0]
-
-    def render(self, form, form_style, context):
-        links, content = '', ''
-        self.first_tab_with_errors(form.errors.keys()).active = True
-        for tab in self.fields:
-            content += render_field(tab, form, form_style, context)
-            links += tab.render_link()
-        return render_to_string(self.template,
-            Context({'tabs': self, 'links': links, 'content': content}))
 
 
 class Column(Div):
@@ -512,7 +371,7 @@ class HTML(object):
     def __init__(self, html):
         self.html = html
 
-    def render(self, form, form_style, context):
+    def render(self, form, form_style, context, template_pack=TEMPLATE_PACK):
         return Template(unicode(self.html)).render(context)
 
 
@@ -533,22 +392,27 @@ class Field(LayoutObject):
         if not hasattr(self, 'attrs'):
             self.attrs = {}
 
-        if kwargs.has_key('css_class'):
+        if 'css_class' in kwargs:
             if 'class' in self.attrs:
                 self.attrs['class'] += " %s" % kwargs.pop('css_class')
             else:
                 self.attrs['class'] = kwargs.pop('css_class')
 
+        self.wrapper_class = kwargs.pop('wrapper_class', None)
         self.template = kwargs.pop('template', self.template)
 
         # We use kwargs as HTML attributes, turning data_id='test' into data-id='test'
-        self.attrs.update(dict([(k.replace('_', '-'), conditional_escape(v)) for k,v in kwargs.items()]))
+        self.attrs.update(dict([(k.replace('_', '-'), conditional_escape(v)) for k, v in kwargs.items()]))
 
-    def render(self, form, form_style, context):
+    def render(self, form, form_style, context, template_pack=TEMPLATE_PACK):
+        if hasattr(self, 'wrapper_class'):
+            context['wrapper_class'] = self.wrapper_class
+
         html = ''
         for field in self.fields:
-            html += render_field(field, form, form_style, context, template=self.template, attrs=self.attrs)
+            html += render_field(field, form, form_style, context, template=self.template, attrs=self.attrs, template_pack=template_pack)
         return html
+
 
 class MultiWidgetField(Field):
     """
@@ -586,3 +450,19 @@ class UneditableField(Field):
     def __init__(self, field, *args, **kwargs):
         self.attrs = {'class': 'uneditable-input'}
         super(UneditableField, self).__init__(field, *args, **kwargs)
+
+
+def TabHolder(*args, **kwargs):
+    warnings.warn("TabHolder has been moved to crispy_forms.bootstrap. \
+        Use that path instead, this import will be removed in 1.3.0", PendingDeprecationWarning)
+
+    from .bootstrap import TabHolder
+    return TabHolder(*args, **kwargs)
+
+
+def Tab(*args, **kwargs):
+    warnings.warn("Tab has been moved to crispy_forms.bootstrap. \
+        Use that path instead, this import will be removed in 1.3.0", PendingDeprecationWarning)
+
+    from .bootstrap import Tab
+    return Tab(*args, **kwargs)

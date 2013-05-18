@@ -7,9 +7,9 @@ Fundamentals
 
 Django-crispy-forms defines another powerful class called ``Layout``, which allows you to change the way the form fields are rendered. This allows you to set the order of the fields, wrap them in divs or other structures, add html, set ids, classes or attributes to whatever you want, etc. And all that without writing a custom form template, using programmatic layouts. Just attach the layout to a helper, layouts are optional, but probably the most powerful thing django-crispy-forms has to offer.
 
-A ``Layout`` is constructed by layout objects, which can be thought of as form components. You assemble your layout using those. For the time being, your choices are: ``ButtonHolder``, ``Button``, ``Div``, ``Row``, ``Column``, ``Fieldset``, ``MultiField``, ``HTML``, ``TemplateInclude``, ``Hidden``, ``Reset``, ``Submit``, ``Field``, ``AppendedText``, ``PrependedText``, ``FormActions``.
+A ``Layout`` is constructed by layout objects, which can be thought of as form components.
 
-All these components are explained later in :ref:`layout objects`. What you need to know now about them is that every component renders a different template and has a different purpose. Let’s write a couple of different layouts for our form, continuing with our form class example (note that the full form is not shown again).
+All these components are explained later in :ref:`layout objects`, what you need to know now about them is that every component renders a different template and has a different purpose. Let’s write a couple of different layouts for our form, continuing with our form class example (note that the full form is not shown again).
 
 Some layout objects are specific to a template pack. For example ``ButtonHolder`` is for ``uni_form`` template_pack, while ``FormActions`` is for ``bootstrap`` template pack.
 
@@ -21,6 +21,7 @@ Let's add a layout to our helper::
     class ExampleForm(forms.Form):
         [...]
         def __init__(self, *args, **kwargs):
+            super(ExampleForm, self).__init__(*args, **kwargs)
             self.helper = FormHelper()
             self.helper.layout = Layout(
                 Fieldset(
@@ -35,7 +36,6 @@ Let's add a layout to our helper::
                     Submit('submit', 'Submit', css_class='button white')
                 )
             )
-            super(ExampleForm, self).__init__(*args, **kwargs)
 
 When we render the form now using::
 
@@ -103,7 +103,18 @@ These ones live in module ``crispy_forms.layout``. These are layout objects that
     Field('password', id="password-field", css_class="passwordfields", title="Explanation")
     Field('slider', template="custom-slider.html")
 
-This layout object can be used to easily extend Django's widgets.
+This layout object can be used to easily extend Django's widgets. If you want to render a Django form field as hidden you can simply do::
+
+    Field('field_name', type="hidden")
+
+If you need HTML5 attributes, you can easily do those using underscores ``data_name`` kwarg here will become into ``data-name`` in your generated html::
+
+    Field('field_name', data_name="special")
+
+Fields in bootstrap are wrapped in a ``<div class="control-group">``. You may want to set extra classes in this div, for that do::
+
+    Field('field_name', wrapper_class="extra-class")
+
 
 - **Submit**: Used to create a submit button. First parameter is the ``name`` attribute of the button, second parameter is the ``value`` attribute::
 
@@ -155,22 +166,99 @@ These ones live in module ``crispy_forms.layout``. Probably in the future they w
 Bootstrap Layout objects
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-This ones live in module ``crispy_forms.bootstrap``.
+These ones live under module ``crispy_forms.bootstrap``.
 
-- **FormActions**: It wraps fields in a ``<div class="form-actions">``. This is a bootstrap layout object to wrapp form's submit buttons::
+- **FormActions**: It wraps fields in a ``<div class="form-actions">``. It is usually used to wrap form's buttons::
 
     FormActions(
-        Submit('save', 'save', css_class="btn-primary")
+        Submit('save', 'Save changes'),
+        Button('cancel', 'Cancel')
     )
+
+.. image:: images/form_actions.png
+   :align: center
 
 - **AppendedText**: It renders a bootstrap appended text input. The first parameter is the name of the field to add appended text to, then the appended text which can be HTML like. There is an optional parameter ``active``, by default set to ``False``, that you can set to a boolean to render appended text active::
 
     AppendedText('field_name', 'appended text to show')
-    AppendedText('field_name', 'appended text to show', active=True)
+    AppendedText('field_name', '$', active=True)
+
+.. image:: images/appended_text.png
+   :align: center
 
 - **PrependedText**: It renders a bootstrap prepended text input. The first parameter is the name of the field to add prepended text to, then the prepended text which can be HTML like. There is an optional parameter ``active``, by default set to ``False``, that you can set to a boolean to render prepended text active::
 
     PrependedText('field_name', '<b>Prepended text</b> to show')
+    PrependedText('field_name', '@', placeholder="username")
+
+.. image:: images/prepended_text.png
+   :align: center
+
+- **PrependedAppendedText**: It renders a combined prepended and appended text. The first parameter is the name of the field, then the prepended text and finally the appended text::
+
+    PrependedAppendedText('field_name', '$', '.00'),
+
+.. image:: images/appended_prepended_text.png
+   :align: center
+
+- **InlineCheckboxes**: It renders a Django ``forms.MultipleChoiceField`` field using inline checkboxes::
+
+    InlineCheckboxes('field_name')
+
+.. image:: images/inline_checkboxes.png
+   :align: center
+
+- **InlineRadios**: It renders a Django ``forms.ChoiceField`` field with its widget set to ``forms.RadioSelect`` using inline radio buttons::
+
+    InlineRadios('field_name')
+
+.. image:: images/inline_radios.jpg
+   :align: center
+
+- **StrictButton**: It renders a button using ``<button>`` html, not ``input``. By default ``type`` is set to ``button`` and ``class`` is set to ``btn``::
+
+    StrictButton('Button's content', name="go", value="go", css_class="extra")
+    StrictButton('Success', css_class="btn-success")
+
+.. image:: images/strict_button.png
+   :align: center
+
+- **FieldWithButtons**: You can create an input connected with buttons::
+
+    FieldWithButtons('field_name', StrictButton("Go!"))
+
+.. image:: images/field_with_buttons.png
+   :align: center
+
+- **Tab & TabHolder**: ``Tab`` renders a tab, different tabs need to be wrapped in a ``TabHolder`` for automatic javascript functioning, also you will need ``bootstrap-tab.js`` included in your static files::
+
+    TabHolder(
+        Tab('First Tab',
+            'field_name_1',
+            Div('field_name_2')
+        ),
+        Tab('Second Tab',
+            Field('field_name_3', css_class="extra")
+        )
+    )
+
+.. image:: images/tab_and_tabholder.jpg
+   :align: center
+
+- **Accordion & AccordionGroup**: ``AccordionGroup`` renders an accordion pane, different groups need to be wrapped in an ``Accordion`` for automatic javascript functioning, also you will need ``bootstrap-tab.js`` included in your static files::
+
+    Accordion(
+        AccordionGroup('First Group',
+            'radio_buttons'
+        ),
+        Tab('Second Group',
+            Field('field_name_3', css_class="extra")
+        )
+    )
+
+.. image:: images/accordiongroup_and_accordion.jpg
+   :align: center
+
 
 
 Overriding layout objects templates
@@ -219,10 +307,22 @@ The official layout objects live in ``layout.py`` and ``bootstrap.py``, you may 
 If you come up with a good idea and design a layout object you think others could benefit from, please open an issue or send a pull request, so django-crispy-forms gets better.
 
 
-Inheriting layouts
-~~~~~~~~~~~~~~~~~~
+Composing layouts
+~~~~~~~~~~~~~~~~~
 
-Imagine you have several forms that share a big chunk of the same layout. There is a way you can create a ``Layout``, reuse and extend it in an easy way. You can have a ``Layout`` as a component of another ``Layout``, let's see an example::
+Imagine you have several forms that share a big chunk of the same layout. There is a easy way you can create a ``Layout``, reuse and extend it. You can have a ``Layout`` as a component of another ``Layout``. You can build that common chunk, different ways. As a separate class::
+
+    class CommonLayout(Layout):
+        def __init__(self, *args, **kwargs):
+            super(CommonLayout, self).__init__(
+                MultiField("User data",
+                    'username',
+                    'lastname',
+                    'age'
+                )
+            )
+
+Maybe an object instance is good enough::
 
     common_layout = Layout(
         MultiField("User data",
@@ -232,8 +332,10 @@ Imagine you have several forms that share a big chunk of the same layout. There 
         )
     )
 
-    example_layout = Layout(
-        common_layout,
+Then you can do::
+
+    helper.layout = Layout(
+        CommonLayout(),
         Div(
             'favorite_food',
             'favorite_bread',
@@ -241,7 +343,9 @@ Imagine you have several forms that share a big chunk of the same layout. There 
         )
     )
 
-    example_layout2 = Layout(
+Or::
+
+    helper.layout = Layout(
         common_layout,
         Div(
             'professional_interests',
@@ -249,4 +353,4 @@ Imagine you have several forms that share a big chunk of the same layout. There 
         )
     )
 
-We have defined a ``common_layout`` that is used as a base for two different layouts: ``example_layout`` and ``example_layout2``, which means that those two layouts will start the same way and then extend the layout in different ways.
+We have defined a layout and used it as a chunk of another layout, which means that those two layouts will start the same way and then extend the layout in different ways.

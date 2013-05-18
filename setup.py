@@ -3,6 +3,10 @@ import crispy_forms
 from setuptools import setup, find_packages
 
 
+tests_require = [
+    'Django>=1.2,<1.6',
+]
+
 setup(
     name='django-crispy-forms',
     version=crispy_forms.__version__,
@@ -21,12 +25,15 @@ setup(
         "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
         "Topic :: Software Development :: Libraries :: Python Modules",
     ],
+    extras_require={
+        'tests': tests_require,
+    },
     keywords=['forms', 'django', 'crispy', 'DRY'],
     author='Miguel Araujo',
     author_email='miguel.araujo.perez@gmail.com',
     url='http://github.com/maraujop/django-crispy-forms',
     license='MIT',
-    packages=find_packages(),
+    packages=find_packages(exclude=['docs']),
     include_package_data=True,
     zip_safe=False,
 )

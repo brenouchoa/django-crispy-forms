@@ -1,6 +1,7 @@
 from itertools import izip
 
 from django import template
+from django.conf import settings
 
 
 register = template.Library()
@@ -10,14 +11,18 @@ class_converter = {
     "fileinput": "fileinput fileUpload",
     "passwordinput": "textinput textInput",
 }
+class_converter.update(getattr(settings, 'CRISPY_CLASS_CONVERTERS', {}))
+
 
 @register.filter
 def is_checkbox(field):
     return field.field.widget.__class__.__name__.lower() == "checkboxinput"
 
+
 @register.filter
 def is_password(field):
     return field.field.widget.__class__.__name__.lower() == "passwordinput"
+
 
 @register.filter
 def classes(field):
@@ -26,6 +31,7 @@ def classes(field):
     """
     return field.widget.attrs.get('class', None)
 
+
 @register.filter
 def css_class(field):
     """
@@ -33,16 +39,18 @@ def css_class(field):
     """
     return field.field.widget.__class__.__name__.lower()
 
+
 def pairwise(iterable):
     "s -> (s0,s1), (s2,s3), (s4, s5), ..."
     a = iter(iterable)
     return izip(a, a)
 
+
 class CrispyFieldNode(template.Node):
     def __init__(self, field, attrs):
-       self.field = field
-       self.attrs = attrs
-       self.html5_required = 'html5_required'
+        self.field = field
+        self.attrs = attrs
+        self.html5_required = 'html5_required'
 
     def render(self, context):
         # Nodes are not threadsafe so we must store and look up our instance
@@ -61,7 +69,7 @@ class CrispyFieldNode(template.Node):
         except template.VariableDoesNotExist:
             html5_required = False
 
-        widgets = getattr(field.field.widget, 'widgets', [field.field.widget,])
+        widgets = getattr(field.field.widget, 'widgets', [field.field.widget])
 
         if isinstance(attrs, dict):
             attrs = [attrs] * len(widgets)
@@ -84,9 +92,15 @@ class CrispyFieldNode(template.Node):
                     widget.attrs['required'] = 'required'
 
             for attribute_name, attribute in attr.items():
-                widget.attrs[template.Variable(attribute_name).resolve(context)] = template.Variable(attribute).resolve(context)
+                attribute_name = template.Variable(attribute_name).resolve(context)
+
+                if attribute_name in widget.attrs:
+                    widget.attrs[attribute_name] += " " + template.Variable(attribute).resolve(context)
+                else:
+                    widget.attrs[attribute_name] = template.Variable(attribute).resolve(context)
 
         return field
+
 
 @register.tag(name="crispy_field")
 def crispy_field(parser, token):

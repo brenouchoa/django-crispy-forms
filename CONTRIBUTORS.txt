@@ -75,3 +75,17 @@ Contributors
 * Thomas Grainger <graingert>
 * Lee Semel <lsemel>
 * <david-e>
+* Alex Yakovlev <libraM>
+* Si Feng <devfeng>
+* Igor Katson <ikatson>
+* Ben Delevingne <rockingskier>
+* <powderflask>
+* Evan Borgstrom <borgstrom>
+* Daniel Shapiro <danxshap>
+* <SpazioDati>
+* Stefan "hr" Berder (白峰) <hrbonz>
+* Suleyman Melikoglu <laplacesdemon>
+* Vladislav Mitov <VMitov>
+* Nemesis Fixx <mcnemesis>
+* Chris Vigelius <chrisv2>
+* David Cramer <dcramer>

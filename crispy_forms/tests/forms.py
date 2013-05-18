@@ -1,5 +1,6 @@
 from django import forms
 from django.db import models
+
 from crispy_forms.helper import FormHelper
 
 
@@ -59,21 +60,35 @@ class CheckboxesTestForm(forms.Form):
         widget = forms.CheckboxSelectMultiple,
     )
 
+    inline_radios = forms.ChoiceField(
+        choices = (
+            ('option_one', "Option one"),
+            ('option_two', "Option two"),
+        ),
+        widget = forms.RadioSelect,
+        initial = 'option_two',
+    )
 
-class TestModel(models.Model):
+
+class CrispyTestModel(models.Model):
     email = models.CharField(max_length=20)
     password = models.CharField(max_length=20)
 
 
 class TestForm3(forms.ModelForm):
     class Meta:
-        model = TestModel
+        model = CrispyTestModel
         fields = ['email', 'password']
         exclude = ['password']
 
     def __init__(self, *args, **kwargs):
         super(TestForm3, self).__init__(*args, **kwargs)
         self.helper = FormHelper(self)
+
+
+class TestForm4(forms.ModelForm):
+    class Meta:
+        model = CrispyTestModel
 
 
 class ExampleForm(forms.Form):

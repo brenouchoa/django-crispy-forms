@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
+from copy import copy
+
 from django.conf import settings
 from django.forms.formsets import BaseFormSet
 from django.template import Context
 from django.template.loader import get_template
+from django.utils.functional import memoize
 from django import template
 
 from crispy_forms.helper import FormHelper
 
 register = template.Library()
 # We import the filters, so they are available when doing load crispy_forms_tags
-from crispy_forms_filters import *
+from crispy_forms.templatetags.crispy_forms_filters import *
 
 TEMPLATE_PACK = getattr(settings, 'CRISPY_TEMPLATE_PACK', 'bootstrap')
 
@@ -51,6 +54,19 @@ class ForLoopSimulator(object):
         self.last = (self.revcounter0 == self.len_values - 1)
 
 
+def copy_context(context):
+    """
+    Copies a `Context` variable. It uses `Context.__copy__` if available
+    (introduced in Django 1.3) or copy otherwise.
+    """
+    if hasattr(context, "__copy__"):
+        return context.__copy__()
+
+    duplicate = copy(context)
+    duplicate.dicts = context.dicts[:]
+    return duplicate
+
+
 class BasicNode(template.Node):
     """
     Basic Node object that we can rely on for Node objects in normal
@@ -59,12 +75,13 @@ class BasicNode(template.Node):
     both the form object and parses out the helper string into attributes
     that templates can easily handle.
     """
-    def __init__(self, form, helper):
+    def __init__(self, form, helper, template_pack=TEMPLATE_PACK):
         self.form = form
         if helper is not None:
             self.helper = helper
         else:
             self.helper = None
+        self.template_pack = template_pack
 
     def get_render(self, context):
         """
@@ -97,18 +114,19 @@ class BasicNode(template.Node):
         # We get the response dictionary
         is_formset = isinstance(actual_form, BaseFormSet)
         response_dict = self.get_response_dict(helper, context, is_formset)
-        node_context = context.__copy__()
+        node_context = copy_context(context)
         node_context.update(response_dict)
 
         # If we have a helper's layout we use it, for the form or the formset's forms
         if helper and helper.layout:
             if not is_formset:
-                actual_form.form_html = helper.render_layout(actual_form, node_context)
+                actual_form.form_html = helper.render_layout(actual_form, node_context, template_pack=self.template_pack)
             else:
                 forloop = ForLoopSimulator(actual_form)
-                for form in actual_form.forms:
+                helper.render_hidden_fields = True
+                for form in actual_form:
                     node_context.update({'forloop': forloop})
-                    form.form_html = helper.render_layout(form, node_context)
+                    form.form_html = helper.render_layout(form, node_context, template_pack=self.template_pack)
                     forloop.iterate()
 
         if is_formset:
@@ -129,7 +147,7 @@ class BasicNode(template.Node):
         if not isinstance(helper, FormHelper):
             raise TypeError('helper object provided to {% crispy %} tag must be a crispy.helper.FormHelper object.')
 
-        attrs = helper.get_attributes()
+        attrs = helper.get_attributes(template_pack=self.template_pack)
         form_type = "form"
         if is_formset:
             form_type = "formset"
@@ -159,51 +177,56 @@ class BasicNode(template.Node):
             if attribute_name not in response_dict:
                 response_dict[attribute_name] = value
 
-        if context.has_key('csrf_token'):
+        if 'csrf_token' in context:
             response_dict['csrf_token'] = context['csrf_token']
 
         return response_dict
 
 
-whole_uni_formset_template = get_template('%s/whole_uni_formset.html' % TEMPLATE_PACK)
-whole_uni_form_template = get_template('%s/whole_uni_form.html' % TEMPLATE_PACK)
+def whole_uni_formset_template(template_pack=TEMPLATE_PACK):
+    return get_template('%s/whole_uni_formset.html' % template_pack)
+whole_uni_formset_template = memoize(whole_uni_formset_template, {}, 1)
+
+
+def whole_uni_form_template(template_pack=TEMPLATE_PACK):
+    return get_template('%s/whole_uni_form.html' % template_pack)
+whole_uni_form_template = memoize(whole_uni_form_template, {}, 1)
+
 
 class CrispyFormNode(BasicNode):
     def render(self, context):
         c = self.get_render(context)
 
         if c['is_formset']:
-            if settings.DEBUG:
-                template = get_template('%s/whole_uni_formset.html' % TEMPLATE_PACK)
-            else:
-                template = whole_uni_formset_template
+            template = whole_uni_formset_template(self.template_pack)
         else:
-            if settings.DEBUG:
-                template = get_template('%s/whole_uni_form.html' % TEMPLATE_PACK)
-            else:
-                template = whole_uni_form_template
+            template = whole_uni_form_template(self.template_pack)
 
         return template.render(c)
 
 
 # {% crispy %} tag
-@register.tag(name="uni_form")
 @register.tag(name="crispy")
 def do_uni_form(parser, token):
     """
     You need to pass in at least the form/formset object, and can also pass in the
     optional `crispy_forms.helpers.FormHelper` object.
 
-    helper (optional): A `uni_form.helper.FormHelper` object.
+    helper (optional): A `crispy_forms.helper.FormHelper` object.
 
     Usage::
 
         {% include crispy_tags %}
         {% crispy form form.helper %}
 
+    You can also provide the template pack as the third argument::
+
+        {% crispy form form.helper 'bootstrap' %}
+
     If the `FormHelper` attribute is named `helper` you can simply do::
 
         {% crispy form %}
+        {% crispy form 'bootstrap' %}
     """
     token = token.split_contents()
     form = token.pop(1)
@@ -213,4 +236,23 @@ def do_uni_form(parser, token):
     except IndexError:
         helper = None
 
-    return CrispyFormNode(form, helper)
+    try:
+        # {% crispy form helper 'bootstrap' %}
+        template_pack = token.pop(1)
+        if not (template_pack[0] == template_pack[-1] and template_pack[0] in ('"', "'")):
+            raise template.TemplateSyntaxError("crispy tag's template_pack argument should be in quotes")
+
+        template_pack = template_pack[1:-1]
+        if template_pack not in ['bootstrap', 'uni_form']:
+            raise template.TemplateSyntaxError("crispy tag's template_pack argument should be \
+                one of 'bootstrap' or 'uni_form'")
+    except IndexError:
+        # {% crispy form 'bootstrap' %}
+        if helper in ("'uni_form'", '"uni_form"', "'bootstrap'", '"bootstrap"'):
+            template_pack = helper[1:-1]
+            helper = None
+        # {% crispy form helper %} OR {% crispy form %}
+        else:
+            template_pack = TEMPLATE_PACK
+
+    return CrispyFormNode(form, helper, template_pack=template_pack)
